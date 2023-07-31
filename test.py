@@ -1,120 +1,56 @@
 import torch
-from torch.distributions import MultivariateNormal, Independent, MixtureSameFamily
+from torch.distributions import MultivariateNormal, MixtureSameFamily
 import numpy as np
-from OpenGL.GL import *
-from OpenGL.GLU import *
-from PyQt5.QtCore import Qt
-from PyQt5.QtWidgets import QOpenGLWidget
-from core.MMG import MMG
-import sys
-from PyQt5.QtWidgets import QApplication
+from core.MMG import MultivariateMixtureGaussian as MMG
+from matplotlib import pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
+
 from loss import MMGLoss
+from plot import polar2color
 
-
-class GLWidget(QOpenGLWidget):
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.xRot = 0
-        self.yRot = 0
-
-    def initializeGL(self):
-        glClearColor(0.0, 0.0, 0.0, 1.0)
-        glEnable(GL_DEPTH_TEST)
-
-    def paintGL(self):
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
-        glLoadIdentity()
-        gluPerspective(45, self.width() / self.height(), 0.1, 100.0)
-        glTranslatef(0.0, 0.0, -6.0)
-        glRotatef(self.xRot / 16.0, 1.0, 0.0, 0.0)
-        glRotatef(self.yRot / 16.0, 0.0, 1.0, 0.0)
-
-        glBegin(GL_LINES)
-        glColor3f(1.0, 0.0, 0.0)
-        glVertex3f(-1.0, 0.0, 0.0)
-        glVertex3f(1.0, 0.0, 0.0)
-        glColor3f(0.0, 1.0, 0.0)
-        glVertex3f(0.0, -1.0, 0.0)
-        glVertex3f(0.0, 1.0, 0.0)
-        glColor3f(0.0, 0.0, 1.0)
-        glVertex3f(0.0, 0.0, -1.0)
-        glVertex3f(0.0, 0.0, 1.0)
-        glEnd()
-        glBegin(GL_POINTS)
-        for i in range(samples.shape[0]):
-            glColor3f(pdf[i], 0.0, 1.0 - pdf[i])
-            glVertex3f(samples[i, 0], samples[i, 1], samples[i, 2])
-        glEnd()
-
-    def wheelEvent(self, event):
-        print(event.angleDelta().y())
-        glMatrixMode(GL_PROJECTION)
-        glPushMatrix()
-        if event.angleDelta().y() > 0:
-            glScaled(1.1, 1.1, 1.1)
-        else:
-            glScaled(0.9, 0.9, 0.9)
-        glPopMatrix()
-        glMatrixMode(GL_MODELVIEW)
-        self.update()
-
-    def mousePressEvent(self, event):
-        self.lastPos = event.pos()
-
-    def mouseMoveEvent(self, event):
-        dx = event.x() - self.lastPos.x()
-        dy = event.y() - self.lastPos.y()
-
-        if event.buttons() & Qt.LeftButton:
-            self.xRot += 8 * dy
-            self.yRot += 8 * dx
-
-        self.lastPos = event.pos()
-        self.update()
-
-
-model_path = '5mixtures4000epochs0.005lrhidden_size32para_num2.pkl'
-model = MMG(1, 5, 32, 2)
-model.load_state_dict(torch.load(model_path))
-x_min = -20
-x_max = 20
-y_min = -15
-y_max = 15
-z_min = -1.5
-z_max = 2 * np.pi
+model_path = '50mixtures3000epochs0.0025lrhidden_size32para_num2.pkl'
+model = MMG(1, 32, 50, 2)
+model.load_state_dict(torch.load('models/MMG/' + model_path))
+x_min = 0
+x_max = 2 * np.pi
+sample_num = 100
 loss_fn = MMGLoss()
-test_x = torch.linspace(x_min, x_max, 100).view(-1, 1)
+test_x = torch.linspace(x_min, x_max, sample_num).view(-1, 1)
 means, vars, weights = model(test_x)
-#将100*5*1*2的means转换为100*5*2的means
-means = means.squeeze(2)
-vars = vars.squeeze(2)
-means = means.double()
-vars = vars.double()
 
 N = means.shape[0]
+print(means.shape)
+print(vars.shape)
+print(weights.shape)
+vars = torch.diag_embed(vars)
 dist = MultivariateNormal(means, vars)
 
 dist = MixtureSameFamily(torch.distributions.Categorical(probs=weights), dist)
 
-samples = dist.sample([100])
+samples = dist.sample([N])
 
 pdf = dist.log_prob(samples)
+pdf = torch.exp(pdf)
+# print(pdf.shape)
+# print(samples.shape)
+samples = samples.view(N**2, 2)
+samples_range = samples.max(dim=0)[0] - samples.min(dim=0)[0]
+# print(samples_range)
+angle = (torch.arange(N) * (x_max - x_min) / N + x_min)
+index = angle * max(samples_range) / x_max
+index = index.repeat(N, 1).reshape(-1, 1)
 
-samples = samples.view(10000, 2)
-
-index = torch.arange(N) * (x_max - x_min) / N + x_min
-index = index.repeat(N, 1).t().reshape(-1, 1)
 samples = torch.cat((index, samples), dim=1)
-pdf = pdf.view(10000, 1)
-print(samples)
+pdf = pdf.view(N**2, 1)
+# print(samples.shape)
 
-# print(pdf)
 pdf = pdf / pdf.max()
-# samples = samples.squeeze(0).numpy()
+color = polar2color(angle)
+color = torch.from_numpy(color).float()
+color = color.repeat(N, 1).reshape(-1, 4)
+samples = samples - samples.mean(dim=0)
 
-app = QApplication(sys.argv)
-widget = GLWidget()
-widget.resize(1500, 1500)
-widget.show()
-sys.exit(app.exec_())
+fig = plt.figure()
+ax = Axes3D(fig)
+ax.scatter(samples[:, 0], samples[:, 1], samples[:, 2], c=color)
+plt.show()

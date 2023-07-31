@@ -2,53 +2,47 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import numpy as np
-import sys
 from mpl_toolkits.mplot3d import Axes3D
 import matplotlib.pyplot as plt
-import scipy.stats
-import matplotlib
 from torch.cuda.amp import autocast, GradScaler
+
 from core.UMG import UMG
-from core.MMG import MMG
+from core.MMG import MultivariateMixtureGaussian as MMG
 from loss import *
 from plot import *
+from time import time
 
 
 # 生成“半月”型数据集
 def generate_n_halfmoons(num_samples, radius=10, distance=5, noise=0.2, n=3):
-    #split_num为将数据集分为几份，每份为一个类别
-    # 生成随机数种子
+
     np.random.seed(0)
     # 生成随机角度
-    theta = np.random.rand(num_samples) * np.pi
-    # 计算“半月”型的半径和距离
+    angle = np.random.rand(num_samples) * np.pi
+
     r = radius + np.random.randn(num_samples) * noise
     d = distance + np.random.randn(num_samples) * noise
-    # 计算“半月”型的坐标
+
     x = np.zeros((num_samples, 2))
-    x[:, 0] = r * np.cos(theta) + d
-    x[:, 1] = r * np.sin(theta)
-    half_moon = x[x[:, 0] > 0]
+    x[:, 0] = r * np.cos(angle) + d
+    x[:, 1] = r * np.sin(angle)
     moons = np.zeros((num_samples * n, 4))
     label = angle = 0
     #一共旋转n次，每次旋转2pi/n
     for i in range(n):
-        r, theta = label2polars(n, label)
+        angle = label2polars(n, label)
         #提升维度至num_samples*2
-        label_data = np.ones((num_samples, 1)) * [r, theta]
-        dx = np.cos(angle) * 2 * distance
-        dy = np.sin(angle) * 2 * distance
+        label_data = np.ones((num_samples, 1)) * angle
+        dx = distance
+        dy = distance
         rotation_matrix = np.array([[np.cos(angle), -np.sin(angle)],
                                     [np.sin(angle),
                                      np.cos(angle)]])
         transform_matrix = np.array([dx, dy])
-        #旋转数据集
         x_rotate = np.dot(x, rotation_matrix) + transform_matrix
 
-        #将数据集和标签合并
         moons[i * num_samples:(i + 1) * num_samples, 0:2] = x_rotate
         moons[i * num_samples:(i + 1) * num_samples, 2] = label_data[:, 0]
-        moons[i * num_samples:(i + 1) * num_samples, 3] = label_data[:, 1]
         label += 1
         angle += 2 * np.pi / n
     return moons
@@ -57,12 +51,12 @@ def generate_n_halfmoons(num_samples, radius=10, distance=5, noise=0.2, n=3):
 def trainUMG():
     # 参数设置
     input_size = 1
-    num_mixtures = 10
-    num_epochs = 2000
-    learning_rate = 0.01
+    num_mixtures = 50
+    num_epochs = 3000
+    learning_rate = 0.0025
     epsilon = 1e-8
     # 生成示例数据
-    data = generate_n_halfmoons(5000, noise=1.3, n=5)
+    data = generate_n_halfmoons(1000, noise=1.5, n=3)
 
     #draw_2d(data)
 
@@ -72,12 +66,11 @@ def trainUMG():
 
     y_data = torch.Tensor(data[:, 1]).view(-1, 1)
     y_min, y_max = torch.min(y_data), torch.max(y_data)
-    r_data = torch.Tensor(data[:, 2]).view(-1, 1)
-    theta_data = torch.Tensor(data[:, 3]).view(-1, 1)
+
+    theta_data = torch.Tensor(data[:, 2]).view(-1, 1)
     #创建MDN模型
     x_data = x_data.cuda()
     y_data = y_data.cuda()
-    r_data = r_data.cuda()
     theta_data = theta_data.cuda()
     model = UMG(input_size, num_mixtures).cuda()
     loss_fn = UMGLoss()
@@ -94,6 +87,7 @@ def trainUMG():
         model.angle_layer.parameters()
     ]
     # 开始训练
+    begin = time()
     for epoch in range(num_epochs):
         for optimizer, parameter in zip(optimizers, parameters):
             optimizer.zero_grad()
@@ -103,17 +97,16 @@ def trainUMG():
                 # 计算损失函数
                 loss = loss_fn.total_loss(value_mean, value_var, value_weight,
                                           angle_mean, angle_var, angle_weight,
-                                          loss_weight, y_data, theta_data,
-                                          epoch)
+                                          y_data, theta_data)
             scalar.scale(loss).backward()
-            scalar.unscale_(angle_optimizer)
+            scalar.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(parameter, 0.5)
             scalar.step(optimizer)
             scalar.update()
 
         if (epoch + 1) % 10 == 0:
             print(f'Epoch [{epoch+1}/{num_epochs}], Loss: {loss.item():.4f}')
-
+    print(f'Training Time:{time()-begin:.4f}s')
     # 使用训练好的模型进行预测
     model.cpu()
     model.eval()
@@ -140,7 +133,7 @@ def trainUMG():
 
     draw_3d(test_x, test_y, value_probility, angle_probility, data)
     #保存模型
-    model_name = str(num_mixtures) + 'mixtures' + str(
+    model_name = 'models/UMG/' + str(num_mixtures) + 'mixtures' + str(
         num_epochs) + 'epochs' + str(learning_rate) + 'lr' + '.pkl'
     torch.save(model.state_dict(), model_name)
 
@@ -148,32 +141,29 @@ def trainUMG():
 def trainMMG():
     # 参数设置
     input_size = 1
-    num_mixtures = 5
-    num_epochs = 4000
-    learning_rate = 0.005
+    num_mixtures = 50
+    num_epochs = 3000
+    learning_rate = 0.0025
     hidden_size = 32
-    para_num = 1
+
+    para_num = 2
     epsilon = 1e-8
     # 生成示例数据
 
-    data = generate_n_halfmoons(500, noise=0.5, n=1)
+    data = generate_n_halfmoons(2000, noise=1.5, n=3)
 
     #draw_2d(data)
 
-    x_data = torch.Tensor(data[:, 0]).view(-1, 1)
-    #获取范围
-    x_min, x_max = torch.min(x_data), torch.max(x_data)
+    x_data = torch.Tensor(data[:, 2]).view(-1, 1)
+
     #剩下的数据
-    y_data = torch.Tensor(data[:, 1:3]).view(-1, para_num)
-    #获取y每个维度上的最小值和最大值
-    y_min, y_max = torch.zeros(y_data.shape[1]), torch.zeros(y_data.shape[1])
-    for i in range(y_data.shape[1]):
-        y_min[i], y_max[i] = torch.min(y_data[:, i]), torch.max(y_data[:, i])
+    y_data = torch.Tensor(data[:, 0:2]).view(-1, para_num)
 
     x_data = x_data.cuda()
     y_data = y_data.cuda()
+    print(x_data.shape)
     print(y_data.shape)
-    model = MMG(input_size, num_mixtures, hidden_size, para_num).cuda()
+    model = MMG(input_size, hidden_size, num_mixtures, para_num).cuda()
     loss_fn = MMGLoss()
     scalar = GradScaler()
     model.train()
@@ -181,6 +171,7 @@ def trainMMG():
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
     # 开始训练
+    begin = time()
     for epoch in range(num_epochs):
 
         optimizer.zero_grad()
@@ -196,9 +187,9 @@ def trainMMG():
 
         if (epoch + 1) % 10 == 0:
             print(f'Epoch [{epoch+1}/{num_epochs}], Loss: {loss.item():.4f}')
-
+    print(f'Training Time:{time()-begin:.4f}s')
     #保存模型
-    model_name = str(num_mixtures) + 'mixtures' + str(
+    model_name = './models/MMG/' + str(num_mixtures) + 'mixtures' + str(
         num_epochs) + 'epochs' + str(
             learning_rate) + 'lr' + 'hidden_size' + str(
                 hidden_size) + 'para_num' + str(para_num) + '.pkl'
@@ -206,4 +197,4 @@ def trainMMG():
 
 
 if __name__ == '__main__':
-    trainUMG()
+    trainMMG()

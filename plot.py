@@ -6,14 +6,13 @@ def label2polars(total, label):
     #共有total个类别，label为类别标签，将其转化为极坐标
     #label为0到total-1的整数
     #将label转化为极坐标
-    r = 1
+
     theta = 2 * np.pi * label / total
-    return r, theta
+    return theta
 
 
 def polar2color(theta=None,
                 num_samples=None,
-                y_range=None,
                 angle_probility=None,
                 value_probility=None):
 
@@ -46,11 +45,6 @@ def polar2color(theta=None,
 
 def draw_3d(test_x, test_y, value_probility, angle_probility, data):
 
-    # plt.figure(figsize=(8, 5))
-    # #半月数据集
-
-    # plt.plot(data[:, 0], data[:, 1], 'ro', label='Original data')
-    # #预测的分布
     X, Y = np.meshgrid(test_x.detach().numpy(), test_y.detach().numpy())
     #绘制三维图像
     Z = value_probility.detach().numpy()
@@ -60,19 +54,12 @@ def draw_3d(test_x, test_y, value_probility, angle_probility, data):
     angle_probility = (angle - np.min(angle)) / (np.max(angle) - np.min(angle))
 
     color = polar2color(num_samples=len(test_x),
-                        y_range=[np.min(Y), np.max(Y)],
                         angle_probility=angle,
                         value_probility=Z)
 
     #绘制三维图像
 
     fig = plt.figure(figsize=(8, 10))
-    # ax = Axes3D(fig)
-    # ax.scatter(X, Y, Z, c=color, cmap='rainbow')
-    # ax.set_xlabel('x')
-    # ax.set_ylabel('y')
-    # ax.set_zlabel('Probability Density')
-    # plt.show()
 
     ax1 = fig.add_subplot(211, projection='3d')
     ax1.scatter(X, Y, Z, c=color, cmap='rainbow')
@@ -81,14 +68,14 @@ def draw_3d(test_x, test_y, value_probility, angle_probility, data):
     ax1.set_zlabel('Probability Density')
     ax2 = fig.add_subplot(212)
     data = data.T
-    r, theta = data[2], data[3]
+    theta = data[2]
     color = polar2color(theta=theta)
     ax2.scatter(data[0], data[1], c=color, cmap='Reds')
     plt.show()
 
 
 def draw_2d(data):
-    #2D GT图像
+    #2D Ground Truth
     data = data.T
     plt.figure(figsize=(8, 5))
     r, theta = data[2], data[3]

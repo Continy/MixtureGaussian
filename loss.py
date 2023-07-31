@@ -1,7 +1,6 @@
 import torch
 import numpy as np
-from torch.distributions.multivariate_normal import MultivariateNormal
-import sys
+from torch.distributions import MultivariateNormal, MixtureSameFamily
 
 
 class UMGLoss():
@@ -10,8 +9,6 @@ class UMGLoss():
 
         pdf = 1 / (torch.sqrt(2 * np.pi * var)) * torch.exp(-(y - mean)**2 /
                                                             (2 * var))
-        #如果概率密度为0，则加上一个很小的数，防止梯度爆炸
-        #pdf += eps
 
         return pdf
 
@@ -29,15 +26,12 @@ class UMGLoss():
         return loss
 
     def total_loss(self, value_mean, value_var, value_weight, angle_mean,
-                   angle_var, angle_weight, loss_weight, value, angle, epoh):
-        #计算总的损失函数
+                   angle_var, angle_weight, value, angle):
 
         value_loss = self.mdn_loss(value_mean, value_var, value_weight, value)
 
         angle_loss = self.mdn_loss(angle_mean, angle_var, angle_weight, angle)
-        loss = value_loss + angle_loss
-        #loss = value_loss * loss_weight[:, 0] + angle_loss * loss_weight[:, 1]
-        # print all shapes
+        loss = value_loss + 0.001 * angle_loss
 
         loss = torch.mean(loss)
         return loss
@@ -45,24 +39,15 @@ class UMGLoss():
 
 class MMGLoss():
 
-    def gaussian_pdf(self, y, means, covs, eps=1e-8):
-
-        mvn = MultivariateNormal(means, covs)
-
-        pdf = mvn.log_prob(y)
-        pdf = torch.exp(pdf)
-        #交换末尾两个维度
-        pdf = pdf.permute(0, 2, 1)
-        #如果概率密度为0，则加上一个很小的数，防止梯度爆炸
-        #pdf += eps
-        return pdf
-
     # 定义损失函数
     def total_loss(self, means, covs, weights, target):
-        pdfs = self.gaussian_pdf(target, means, covs)
-
-        pdfs_weighted = torch.sum(pdfs * weights, dim=1)
-
-        loss = -torch.log(pdfs_weighted + 1e-6)
+        #将covs转换为协方差矩阵
+        covs = torch.diag_embed(covs)
+        mvn = MultivariateNormal(means, covs)
+        dist = MixtureSameFamily(
+            torch.distributions.Categorical(probs=weights), mvn)
+        pdf = dist.log_prob(target)
+        pdf = torch.exp(pdf)
+        loss = -torch.log(pdf + 1e-6)
         loss = torch.mean(loss)
         return loss
