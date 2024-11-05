@@ -51,6 +51,7 @@ color = color.repeat(N, 1).reshape(-1, 4)
 samples = samples - samples.mean(dim=0)
 
 fig = plt.figure()
-ax = Axes3D(fig)
+ax = fig.add_subplot(111, projection='3d')
+samples = samples.numpy()
 ax.scatter(samples[:, 0], samples[:, 1], samples[:, 2], c=color)
 plt.show()

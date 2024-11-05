@@ -1,10 +1,11 @@
+import os
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import numpy as np
 from mpl_toolkits.mplot3d import Axes3D
 import matplotlib.pyplot as plt
-from torch.cuda.amp import autocast, GradScaler
+from torch.amp import autocast, GradScaler
 
 from core.UMG import UMG
 from core.MMG import MultivariateMixtureGaussian as MMG
@@ -91,7 +92,7 @@ def trainUMG():
     for epoch in range(num_epochs):
         for optimizer, parameter in zip(optimizers, parameters):
             optimizer.zero_grad()
-            with autocast():
+            with autocast('cuda'):
                 value_mean, value_var, value_weight, angle_mean, angle_var, angle_weight, loss_weight = model(
                     x_data)
                 # 计算损失函数
@@ -175,7 +176,7 @@ def trainMMG():
     for epoch in range(num_epochs):
 
         optimizer.zero_grad()
-        with autocast():
+        with autocast('cuda'):
             means, covs, weights = model(x_data)
             # 计算损失函数
             loss = loss_fn.total_loss(means, covs, weights, y_data)
@@ -188,11 +189,13 @@ def trainMMG():
         if (epoch + 1) % 10 == 0:
             print(f'Epoch [{epoch+1}/{num_epochs}], Loss: {loss.item():.4f}')
     print(f'Training Time:{time()-begin:.4f}s')
+
     #保存模型
     model_name = './models/MMG/' + str(num_mixtures) + 'mixtures' + str(
         num_epochs) + 'epochs' + str(
             learning_rate) + 'lr' + 'hidden_size' + str(
                 hidden_size) + 'para_num' + str(para_num) + '.pkl'
+    os.makedirs(os.path.dirname(model_name), exist_ok=True)
     torch.save(model.state_dict(), model_name)
 
 
